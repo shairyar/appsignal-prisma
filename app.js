@@ -3,7 +3,7 @@ const { Appsignal } = require("@appsignal/nodejs");
 const appsignal = new Appsignal({
   active: true,
   name: "prisma",
-  pushApiKey: "PUSH-API-KEY",
+  pushApiKey: "a5107be0-5f1e-4cc3-993b-c19b324b4aa0",
   logPath: "logs",
   logLevel: "trace",
 });
@@ -22,6 +22,24 @@ const port = 3000;
 app.use(expressMiddleware(appsignal));
 
 app.get("/", (req, res) => {
+  const tracer = appsignal.tracer();
+  tracer.withSpan(tracer.createSpan(), async (span) => {
+    // the span returned by `tracer.createSpan()` now has a Scope
+    // it will be the next span to be returned by `tracer.currentSpan()`!
+    getUsers()
+      .catch((e) => {
+        throw e;
+      })
+      .finally(async () => {
+        await prisma.$disconnect();
+      });
+  });
+
+  res.send("Hello World!");
+});
+
+// POST method route
+app.post("/post", (req, res) => {
   getUsers()
     .catch((e) => {
       throw e;
@@ -29,21 +47,8 @@ app.get("/", (req, res) => {
     .finally(async () => {
       await prisma.$disconnect();
     });
-
-  res.send("Hello World!");
+  res.send("POST request");
 });
-
-// POST method route
-app.post('/post', (req, res) => {
-  getUsers()
-  .catch((e) => {
-    throw e;
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
-  res.send('POST request')
-})
 // ADD THIS AFTER ANY OTHER EXPRESS MIDDLEWARE, AND AFTER ANY ROUTES!
 app.use(expressErrorHandler(appsignal));
 
@@ -51,28 +56,39 @@ app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
 });
 
+prisma.$use(async (params, next) => {
+  const tracer = appsignal.tracer();
+  const span = tracer.currentSpan();
+
+  const result = await next(params);
+  const startTime = new Date();
+
+  span.setName(`Query.sql.${params.model}.${params.action}`);
+  span.setCategory(`sql.${params.action}`);
+  const endTime = new Date();
+  const took = endTime.getTime() - startTime.getTime(); // in ms
+  console.log(`Query-${params.model}.${params.action}- took - ${took} -ms`);
+  span.close();
+  return result;
+});
+
 // A `main` function so that you can use async/await
 async function getUsers() {
   const tracer = appsignal.tracer();
 
-  // Record and log how long queries take:
-  const startTime = new Date();
-  const span = tracer.createSpan();
-  span.setName(`Query.sql.user.get`);
-  span.setCategory(`sql.getUsers`);
+  tracer.withSpan(tracer.currentSpan(), async (span) => {
+    // `span` is the same span created by `tracer.createSpan()` in the example above!
+    span.setName(`Method call`);
+    span.setCategory(`getUsers`);
 
-  const allUsers = await prisma.user.findMany({
-    include: { posts: true },
+    await tracer.withSpan(span.child(), async (child) => {
+      const allUsers = await prisma.user.findMany({
+        include: { posts: true },
+      });
+      console.dir(allUsers, { depth: null });
+      child.close();
+      return allUsers;
+    });
+    span.close();
   });
-
-  const endTime = new Date();
-  const took = endTime.getTime() - startTime.getTime(); // in ms
-  // const took = Math.round(hrend[0] + hrend[1] / 10 ** 6); // convert to ms - 10 ** 6 = Math.pow(10, 6);
-  console.log(`Query-get-users- took - ${took} -ms`);
-  span.close();
-
-  // use `console.dir` to print nested objects
-  console.dir(allUsers, { depth: null });
-
-  return allUsers;
 }
