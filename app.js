@@ -3,7 +3,7 @@ const { Appsignal } = require("@appsignal/nodejs");
 const appsignal = new Appsignal({
   active: true,
   name: "prisma",
-  pushApiKey: "a5107be0-5f1e-4cc3-993b-c19b324b4aa0",
+  pushApiKey: "PUSH-API-KEY",
   logPath: "logs",
   logLevel: "trace",
 });
@@ -40,13 +40,16 @@ app.get("/", (req, res) => {
 
 // POST method route
 app.post("/post", (req, res) => {
-  getUsers()
-    .catch((e) => {
-      throw e;
-    })
-    .finally(async () => {
-      await prisma.$disconnect();
-    });
+  const tracer = appsignal.tracer();
+  tracer.withSpan(tracer.createSpan(), async (span) => {
+    getUsers()
+      .catch((e) => {
+        throw e;
+      })
+      .finally(async () => {
+        await prisma.$disconnect();
+      });
+  });
   res.send("POST request");
 });
 // ADD THIS AFTER ANY OTHER EXPRESS MIDDLEWARE, AND AFTER ANY ROUTES!
